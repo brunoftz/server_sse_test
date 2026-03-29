@@ -81,98 +81,142 @@ def home():
                 </p>
             </div>
 
-            <script>
+          <script>
 
-                const evtSource = new EventSource("/stream");
+    console.log("🔌 Iniciando conexão com SSE...");
 
-                evtSource.onmessage = function(event) {
+    const url = "https://serverssetest-production.up.railway.app/stream";
+    const evtSource = new EventSource(url);
 
-                console.log("Evento SSE:", event.data);
+    // ✅ conexão aberta
+    evtSource.onopen = function () {
+        console.log("✅ Conectado ao SSE com sucesso!");
+    };
 
-                const data = JSON.parse(event.data);
+    // 📩 mensagem recebida
+    evtSource.onmessage = function (event) {
 
-                if (data.type === "highlight") {
+        console.log("📩 Evento bruto recebido:", event.data);
 
-                    bloquearMultiplasFrases(data.texts);
-                    aplicarBlurPopup();
+        if (!event.data || event.data.trim() === "") {
+            console.log("💓 Heartbeat recebido (keep-alive)");
+            return;
+        }
 
-                }
-            };
+        try {
+            const data = JSON.parse(event.data);
 
+            console.log("📦 JSON parseado:", data);
 
+            if (data.type === "highlight") {
+                console.log("🚨 Highlight acionado com frases:", data.texts);
 
-                function bloquearMultiplasFrases(frases) {
-
-                frases.forEach(frase => {
-
-                    const walker = document.createTreeWalker(
-                        document.getElementById("conteudo"),
-                        NodeFilter.SHOW_TEXT,
-                        null,
-                        false
-                    );
-
-                    let node;
-
-                    while(node = walker.nextNode()) {
-
-                        const texto = node.nodeValue;
-
-                        if (texto.includes(frase)) {
-
-                            const partes = texto.split(frase);
-                            const fragment = document.createDocumentFragment();
-
-                            partes.forEach((parte, index) => {
-
-                                fragment.appendChild(
-                                    document.createTextNode(parte)
-                                );
-
-                                if (index < partes.length - 1) {
-
-                                    const span = document.createElement("span");
-                                    span.className = "redacted";
-                                    span.textContent = "[redacted]";
-
-                                    fragment.appendChild(span);
-                                }
-                            });
-
-                            node.parentNode.replaceChild(fragment, node);
-                        }
-                    }
-                });
+                bloquearMultiplasFrases(data.texts);
+                aplicarBlurPopup();
             }
 
+        } catch (err) {
+            console.error("❌ Erro ao fazer parse do JSON:", err);
+        }
+    };
+
+    // ❌ erro geral
+    evtSource.onerror = function (err) {
+        console.error("❌ Erro na conexão SSE:", err);
+
+        if (evtSource.readyState === EventSource.CLOSED) {
+            console.error("🔴 Conexão SSE foi fechada");
+        } else if (evtSource.readyState === EventSource.CONNECTING) {
+            console.warn("🟡 Tentando reconectar ao SSE...");
+        }
+    };
 
 
-                function aplicarBlurPopup() {
 
-                    document.getElementById("conteudo").classList.add("blurred");
+    function bloquearMultiplasFrases(frases) {
 
-                    const overlay = document.createElement("div");
-                    overlay.className = "overlay";
+        console.log("🔍 Iniciando bloqueio de frases...");
 
-                    const popup = document.createElement("div");
-                    popup.className = "popup";
+        frases.forEach(frase => {
 
-                    popup.innerHTML = `
-                        <h2>Conteúdo bloqueado</h2>
-                        <p>Algumas palavras foram ocultadas automaticamente.</p>
-                        <button id="fechar">Entendi</button>
-                    `;
+            console.log("➡️ Procurando frase:", frase);
 
-                    overlay.appendChild(popup);
-                    document.body.appendChild(overlay);
+            const walker = document.createTreeWalker(
+                document.getElementById("conteudo"),
+                NodeFilter.SHOW_TEXT,
+                null,
+                false
+            );
 
-                    document.getElementById("fechar").onclick = () => {
-                        overlay.remove();
-                        document.getElementById("conteudo").classList.remove("blurred");
-                    };
+            let node;
+
+            while (node = walker.nextNode()) {
+
+                const texto = node.nodeValue;
+
+                if (texto.includes(frase)) {
+
+                    console.log("🚫 Frase encontrada no texto:", texto);
+
+                    const partes = texto.split(frase);
+                    const fragment = document.createDocumentFragment();
+
+                    partes.forEach((parte, index) => {
+
+                        fragment.appendChild(
+                            document.createTextNode(parte)
+                        );
+
+                        if (index < partes.length - 1) {
+
+                            const span = document.createElement("span");
+                            span.className = "redacted";
+                            span.textContent = "[redacted]";
+
+                            fragment.appendChild(span);
+                        }
+                    });
+
+                    node.parentNode.replaceChild(fragment, node);
                 }
+            }
+        });
 
-            </script>
+        console.log("✅ Bloqueio concluído");
+    }
+
+
+
+    function aplicarBlurPopup() {
+
+        console.log("🌀 Aplicando blur + popup");
+
+        document.getElementById("conteudo").classList.add("blurred");
+
+        const overlay = document.createElement("div");
+        overlay.className = "overlay";
+
+        const popup = document.createElement("div");
+        popup.className = "popup";
+
+        popup.innerHTML = `
+            <h2>Conteúdo bloqueado</h2>
+            <p>Algumas palavras foram ocultadas automaticamente.</p>
+            <button id="fechar">Entendi</button>
+        `;
+
+        overlay.appendChild(popup);
+        document.body.appendChild(overlay);
+
+        document.getElementById("fechar").onclick = () => {
+            console.log("🟢 Usuário fechou o popup");
+
+            overlay.remove();
+            document.getElementById("conteudo").classList.remove("blurred");
+        };
+    }
+
+</script>
 
         </body>
     </html>
