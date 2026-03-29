@@ -135,55 +135,63 @@ def home():
 
     function bloquearMultiplasFrases(frases) {
 
-        console.log("🔍 Iniciando bloqueio de frases...");
+    console.log("🔍 Iniciando bloqueio de frases...");
 
-        frases.forEach(frase => {
+    const root = document.getElementById("conteudo");
 
-            console.log("➡️ Procurando frase:", frase);
-
-            const walker = document.createTreeWalker(
-                document.getElementById("conteudo"),
-                NodeFilter.SHOW_TEXT,
-                null,
-                false
-            );
-
-            let node;
-
-            while (node = walker.nextNode()) {
-
-                const texto = node.nodeValue;
-
-                if (texto.includes(frase)) {
-
-                    console.log("🚫 Frase encontrada no texto:", texto);
-
-                    const partes = texto.split(frase);
-                    const fragment = document.createDocumentFragment();
-
-                    partes.forEach((parte, index) => {
-
-                        fragment.appendChild(
-                            document.createTextNode(parte)
-                        );
-
-                        if (index < partes.length - 1) {
-
-                            const span = document.createElement("span");
-                            span.className = "redacted";
-                            span.textContent = "[redacted]";
-
-                            fragment.appendChild(span);
-                        }
-                    });
-
-                    node.parentNode.replaceChild(fragment, node);
-                }
-            }
-        });
-
-        console.log("✅ Bloqueio concluído");
+    if (!root) {
+        console.warn("⚠️ #conteudo não encontrado, usando document.body");
     }
+
+    const target = root || document.body;
+
+    frases.forEach(frase => {
+
+        console.log("➡️ Procurando frase:", frase);
+
+        const walker = document.createTreeWalker(
+            target,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+        );
+
+        let node;
+
+        while (node = walker.nextNode()) {
+
+            const texto = node.nodeValue;
+
+            if (texto.includes(frase)) {
+
+                console.log("🚫 Frase encontrada:", frase);
+
+                const partes = texto.split(frase);
+                const fragment = document.createDocumentFragment();
+
+                partes.forEach((parte, index) => {
+
+                    fragment.appendChild(
+                        document.createTextNode(parte)
+                    );
+
+                    if (index < partes.length - 1) {
+
+                        const span = document.createElement("span");
+                        span.className = "redacted";
+                        span.textContent = "[redacted]";
+
+                        fragment.appendChild(span);
+                    }
+                });
+
+                node.parentNode.replaceChild(fragment, node);
+            }
+        }
+    });
+
+    console.log("✅ Bloqueio concluído");
+}
 
 
 
@@ -191,8 +199,10 @@ def home():
 
         console.log("🌀 Aplicando blur + popup");
 
-        document.getElementById("conteudo").classList.add("blurred");
+        const conteudo = document.getElementById("conteudo") || document.body;
 
+        conteudo.classList.add("blurred");
+        
         const overlay = document.createElement("div");
         overlay.className = "overlay";
 
