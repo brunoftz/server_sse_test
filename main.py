@@ -271,27 +271,27 @@ async def stream(request: Request, clientId: str, tabId: str):
     print(f"🟢 Conectado: client={clientId} tab={tabId}")
 
     async def event_generator():
-        yield "retry: 300\n\n"  # 🔥 importante (abre conexão rápido)
-        yield ":\n\n"            # abre conexão
-    
-        while True:
-            try:
-                data = await asyncio.wait_for(queue.get(), timeout=5)
-                yield f"data: {data}\n\n"
-            except asyncio.TimeoutError:
-                yield ":\n\n"  # 🔥 heartbeat constante
-            except Exception as e:
-                print("❌ Erro no stream:", str(e))
-                break
-                
-            finally:
-                # 🔥 remove quando desconectar
-                print(f"🔴 Desconectado: {clientId} | {tabId}")
-                connections.get(clientId, {}).pop(tabId, None)
-        
-                # 🔥 limpa client vazio
-                if clientId in connections and not connections[clientId]:
-                    connections.pop(clientId)
+        try:
+            yield "retry: 300\n\n"
+            yield ":\n\n"
+
+            while True:
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=5)
+                    yield f"data: {data}\n\n"
+                except asyncio.TimeoutError:
+                    yield ":\n\n"  # heartbeat
+                except Exception as e:
+                    print("❌ Erro no stream:", str(e))
+                    break
+
+        finally:
+            # 🔥 só executa quando a conexão REALMENTE fecha
+            print(f"🔴 Desconectado: {clientId} | {tabId}")
+            connections.get(clientId, {}).pop(tabId, None)
+
+            if clientId in connections and not connections[clientId]:
+                connections.pop(clientId)
 
     return StreamingResponse(
         event_generator(),
