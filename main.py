@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi import Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import json
@@ -16,6 +16,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.options("/stream")
+async def options_stream():
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Methods": "GET",
+        }
+    )
 
 # fila de eventos (simula comunicação do proxy/IA)
 connections = {}
@@ -251,7 +262,7 @@ def home():
 async def stream(request: Request, clientId: str, tabId: str):
 
     if clientId not in connections:
-    connections[clientId] = {}
+        connections[clientId] = {}
 
     if tabId not in connections[clientId]:
         connections[clientId][tabId] = asyncio.Queue()
@@ -260,19 +271,19 @@ async def stream(request: Request, clientId: str, tabId: str):
     print(f"🟢 Conectado: client={clientId} tab={tabId}")
 
     async def event_generator():
-        try:
-            yield ":\n\n"
-            while True:
-                try:
-                    data = await asyncio.wait_for(queue.get(), timeout=15)
-                    yield f"data: {data}\n\n"
-                except asyncio.TimeoutError:
-                    yield ":\n\n"
+        yield ":\n\n"  # 🔥 importante (abre conexão rápido)
+    
+        while True:
+            try:
+                data = await asyncio.wait_for(queue.get(), timeout=10)
+                yield f"data: {data}\n\n"
+            except asyncio.TimeoutError:
+                yield ":\n\n"  # 🔥 heartbeat constante
         finally:
             # 🔥 remove quando desconectar
             print(f"🔴 Desconectado: {clientId} | {tabId}")
             connections.get(clientId, {}).pop(tabId, None)
-
+    
             # 🔥 limpa client vazio
             if clientId in connections and not connections[clientId]:
                 connections.pop(clientId)
@@ -284,6 +295,8 @@ async def stream(request: Request, clientId: str, tabId: str):
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Methods": "GET",
         }
     )
 
