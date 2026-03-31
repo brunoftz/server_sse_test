@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
@@ -17,7 +18,7 @@ app.add_middleware(
 )
 
 # fila de eventos (simula comunicação do proxy/IA)
-event_queue = asyncio.Queue()
+connections = {}
 
 @app.get("/")
 def home():
@@ -85,7 +86,19 @@ def home():
 
     console.log("🔌 Iniciando conexão com SSE...");
 
-    const url = "https://serverssetest-production.up.railway.app/stream";
+    // 🔑 clientId (persistente)
+    const clientId = localStorage.getItem("clientId") || crypto.randomUUID();
+    localStorage.setItem("clientId", clientId);
+    
+    // 🔑 tabId (único por aba)
+    const tabId = sessionStorage.getItem("tabId") || crypto.randomUUID();
+    sessionStorage.setItem("tabId", tabId);
+    
+    console.log("🆔 clientId:", clientId);
+    console.log("🧩 tabId:", tabId);
+    
+    // 🚀 conecta no SSE
+    const url = `https://serverssetest-production.up.railway.app/stream?clientId=${clientId}&tabId=${tabId}`;
     const evtSource = new EventSource(url);
 
     // ✅ conexão aberta
@@ -235,20 +248,34 @@ def home():
 
 
 @app.get("/stream")
-async def stream():
+async def stream(request: Request, clientId: str, tabId: str):
+
+    if clientId not in connections:
+    connections[clientId] = {}
+
+    if tabId not in connections[clientId]:
+        connections[clientId][tabId] = asyncio.Queue()
+
+    queue = connections[clientId][tabId]
+    print(f"🟢 Conectado: client={clientId} tab={tabId}")
 
     async def event_generator():
-        yield ":\n\n"  # comentário inicial para evitar timeout imediato
-        while True:
-            try:
-                data = await asyncio.wait_for(event_queue.get(), timeout=15)
+        try:
+            yield ":\n\n"
+            while True:
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"data: {data}\n\n"
+                except asyncio.TimeoutError:
+                    yield ":\n\n"
+        finally:
+            # 🔥 remove quando desconectar
+            print(f"🔴 Desconectado: {clientId} | {tabId}")
+            connections.get(clientId, {}).pop(tabId, None)
 
-                yield f"data: {data}\n\n"
-                await asyncio.sleep(0)
-
-            except asyncio.TimeoutError:
-                # heartbeat para manter conexão viva
-                yield ":\n\n"
+            # 🔥 limpa client vazio
+            if clientId in connections and not connections[clientId]:
+                connections.pop(clientId)
 
     return StreamingResponse(
         event_generator(),
@@ -256,9 +283,7 @@ async def stream():
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "Content-Type": "text/event-stream",
             "Access-Control-Allow-Origin": "*",
-            "Transfer-Encoding": "chunked",
         }
     )
 
@@ -269,15 +294,49 @@ async def stream():
 @app.post("/proxy-result")
 async def proxy_result(frases: List[str]):
 
-    print("EVENTO RECEBIDO:", frases)
+    payload = {
+        "type": "highlight",
+        "texts": frases
+    }
+
+    data = json.dumps(payload)
+
+    print("📡 Broadcast para todos")
+
+    for client in connections.values():
+        for queue in client.values():
+            await queue.put(data)
+
+    return {"status": "broadcast sent"}
+
+@app.post("/send-to-client")
+async def send_to_client(clientId: str, frases: List[str]):
 
     payload = {
         "type": "highlight",
         "texts": frases
     }
 
-    await event_queue.put(json.dumps(payload))
+    data = json.dumps(payload)
 
-    print("EVENTO ENVIADO PARA FILA")
+    if clientId in connections:
+        for queue in connections[clientId].values():
+            await queue.put(data)
 
-    return {"status": "event sent"}
+    return {"status": "sent to client"}
+
+@app.post("/send-to-tab")
+async def send_to_tab(clientId: str, tabId: str, frases: List[str]):
+
+    payload = {
+        "type": "highlight",
+        "texts": frases
+    }
+
+    data = json.dumps(payload)
+
+    if clientId in connections:
+        if tabId in connections[clientId]:
+            await connections[clientId][tabId].put(data)
+
+    return {"status": "sent to tab"}
