@@ -271,14 +271,19 @@ async def stream(request: Request, clientId: str, tabId: str):
     print(f"🟢 Conectado: client={clientId} tab={tabId}")
 
     async def event_generator():
-        yield ":\n\n"  # 🔥 importante (abre conexão rápido)
+        yield "retry: 300\n\n"  # 🔥 importante (abre conexão rápido)
+        yield ":\n\n"            # abre conexão
     
         while True:
             try:
-                data = await asyncio.wait_for(queue.get(), timeout=10)
+                data = await asyncio.wait_for(queue.get(), timeout=5)
                 yield f"data: {data}\n\n"
             except asyncio.TimeoutError:
                 yield ":\n\n"  # 🔥 heartbeat constante
+            except Exception as e:
+                print("❌ Erro no stream:", str(e))
+                break
+                
             finally:
                 # 🔥 remove quando desconectar
                 print(f"🔴 Desconectado: {clientId} | {tabId}")
