@@ -279,14 +279,14 @@ async def stream(request: Request, clientId: str, tabId: str):
                 yield f"data: {data}\n\n"
             except asyncio.TimeoutError:
                 yield ":\n\n"  # 🔥 heartbeat constante
-        finally:
-            # 🔥 remove quando desconectar
-            print(f"🔴 Desconectado: {clientId} | {tabId}")
-            connections.get(clientId, {}).pop(tabId, None)
-    
-            # 🔥 limpa client vazio
-            if clientId in connections and not connections[clientId]:
-                connections.pop(clientId)
+            finally:
+                # 🔥 remove quando desconectar
+                print(f"🔴 Desconectado: {clientId} | {tabId}")
+                connections.get(clientId, {}).pop(tabId, None)
+        
+                # 🔥 limpa client vazio
+                if clientId in connections and not connections[clientId]:
+                    connections.pop(clientId)
 
     return StreamingResponse(
         event_generator(),
