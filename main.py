@@ -4,7 +4,9 @@ from fastapi.responses import HTMLResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import json
-from typing import List
+from typing import List, Optional
+
+from pydantic import BaseModel
 
 
 app = FastAPI()
@@ -30,6 +32,8 @@ async def options_stream():
 
 # fila de eventos (simula comunicação do proxy/IA)
 connections = {}
+# correlaciona um navId (emitido pelo mitmproxy por carregamento) à mesma fila do SSE
+nav_connections = {}
 
 @app.get("/")
 def home():
@@ -105,11 +109,14 @@ def home():
     const tabId = sessionStorage.getItem("tabId") || crypto.randomUUID();
     sessionStorage.setItem("tabId", tabId);
     
+    const navId = crypto.randomUUID();
+
     console.log("🆔 clientId:", clientId);
     console.log("🧩 tabId:", tabId);
+    console.log("🧭 navId:", navId);
     
-    // 🚀 conecta no SSE
-    const url = `https://serverssetest-production.up.railway.app/stream?clientId=${clientId}&tabId=${tabId}`;
+    // 🚀 conecta no SSE (navId alinha com o fluxo do mitmproxy / logs)
+    const url = `https://serverssetest-production.up.railway.app/stream?clientId=${encodeURIComponent(clientId)}&tabId=${encodeURIComponent(tabId)}&navId=${encodeURIComponent(navId)}`;
     const evtSource = new EventSource(url);
 
     // ✅ conexão aberta
@@ -259,7 +266,12 @@ def home():
 
 
 @app.get("/stream")
-async def stream(request: Request, clientId: str, tabId: str):
+async def stream(
+    request: Request,
+    clientId: str,
+    tabId: str,
+    navId: Optional[str] = None,
+):
 
     if clientId not in connections:
         connections[clientId] = {}
@@ -268,7 +280,9 @@ async def stream(request: Request, clientId: str, tabId: str):
         connections[clientId][tabId] = asyncio.Queue()
 
     queue = connections[clientId][tabId]
-    print(f"🟢 Conectado: client={clientId} tab={tabId}")
+    if navId:
+        nav_connections[navId] = queue
+    print(f"🟢 Conectado: client={clientId} tab={tabId} nav={navId or '-'}")
 
     async def event_generator():
         try:
@@ -287,7 +301,9 @@ async def stream(request: Request, clientId: str, tabId: str):
 
         finally:
             # 🔥 só executa quando a conexão REALMENTE fecha
-            print(f"🔴 Desconectado: {clientId} | {tabId}")
+            print(f"🔴 Desconectado: {clientId} | {tabId} | nav={navId or '-'}")
+            if navId:
+                nav_connections.pop(navId, None)
             connections.get(clientId, {}).pop(tabId, None)
 
             if clientId in connections and not connections[clientId]:
@@ -358,3 +374,29 @@ async def send_to_tab(clientId: str, tabId: str, frases: List[str]):
             await connections[clientId][tabId].put(data)
 
     return {"status": "sent to tab"}
+
+
+class SendToNavBody(BaseModel):
+    """Corpo JSON para o worker (main) — evita limite de tamanho de query string nas frases."""
+    navId: str
+    frases: List[str] = []
+
+
+@app.post("/send-to-nav")
+async def send_to_nav(body: SendToNavBody):
+    """Envia highlight só para o SSE que registrou esse navId (ex.: mesmo id do log do mitmproxy)."""
+    if not body.frases:
+        return {"status": "ignored", "reason": "empty frases", "navId": body.navId}
+
+    payload = {
+        "type": "highlight",
+        "texts": body.frases,
+    }
+    data = json.dumps(payload)
+
+    queue = nav_connections.get(body.navId)
+    if queue is None:
+        return {"status": "no active stream for navId", "navId": body.navId}
+
+    await queue.put(data)
+    return {"status": "sent to nav", "navId": body.navId}
