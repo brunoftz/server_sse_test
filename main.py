@@ -77,10 +77,14 @@ def home():
                 }
 
                 .redacted {
-                    background:black;
-                    color:white;
-                    padding:2px 6px;
-                    border-radius:4px;
+                    display: inline-block;
+                    background: #eceff3;
+                    color: #3b4350;
+                    padding: 2px 10px;
+                    border-radius: 999px;
+                    border: 1px solid #d7dde6;
+                    font-weight: 600;
+                    line-height: 1.25;
                 }
 
             </style>
