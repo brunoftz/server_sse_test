@@ -143,7 +143,7 @@ def home():
                 console.log("🚨 Highlight acionado com frases:", data.texts);
 
                 bloquearMultiplasFrases(data.texts);
-                aplicarBlurPopup();
+                aplicarBlurPopup(data.motivos || []);
             }
 
         } catch (err) {
@@ -226,7 +226,30 @@ def home():
 
 
 
-    function aplicarBlurPopup() {
+    function traduzirMotivo(motivo) {
+        const m = String(motivo || "").toLowerCase();
+        if (m === "gender") return "Genero";
+        if (m === "race") return "Racial";
+        if (m === "religion") return "Religiao";
+        if (m === "lgbtqphobia") return "LGBTQfobia";
+        if (m === "xenophobia") return "Xenofobia";
+        return motivo || "Nao informado";
+    }
+    
+    function getSiteUrlForQr() {
+        const params = new URLSearchParams(window.location.search);
+        const rawSite = params.get("site");
+        if (rawSite) {
+            try {
+                return decodeURIComponent(rawSite);
+            } catch (e) {
+                return rawSite;
+            }
+        }
+        return window.location.href;
+    }
+
+    function aplicarBlurPopup(motivos) {
 
         console.log("🌀 Aplicando blur + popup");
 
@@ -240,9 +263,32 @@ def home():
         const popup = document.createElement("div");
         popup.className = "popup";
 
+        const motivosValidos = Array.isArray(motivos) ? motivos.filter(Boolean) : [];
+        const siteUrl = getSiteUrlForQr();
+        const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(siteUrl)}`;
+        const motivoHtml = motivosValidos.length
+            ? `<p><strong>Motivos detectados:</strong> ${motivosValidos.map(traduzirMotivo).join(", ")}</p>`
+            : `<p><strong>Motivo detectado:</strong> Nao informado</p>`;
+
         popup.innerHTML = `
-            <h2>Conteúdo bloqueado</h2>
-            <p>Algumas palavras foram ocultadas automaticamente.</p>
+            <h2>Conteudo bloqueado</h2>
+            <div style="display:flex; gap:16px; align-items:center; text-align:left; margin-top:12px;">
+                <div style="flex:0 0 170px; display:flex; flex-direction:column; align-items:center; gap:8px;">
+                    <p style="font-size:13px; margin:0; text-align:center;">
+                        Leia o <strong>QR Code</strong> em nosso aplicativo para sugerir desbloqueio.
+                    </p>
+                    <img
+                        src="${qrCodeUrl}"
+                        alt="QR Code do site"
+                        style="width:160px; height:160px; border:1px solid #ddd; border-radius:8px;"
+                    />
+                </div>
+                <div style="flex:1; min-width:0;">
+                    <p>Algumas palavras foram ocultadas automaticamente.</p>
+                    ${motivoHtml}
+                    <p style="word-break:break-all; font-size:12px;"><strong>Site:</strong> ${siteUrl}</p>
+                </div>
+            </div>
             <button id="fechar">Entendi</button>
         `;
 
@@ -380,6 +426,7 @@ class SendToNavBody(BaseModel):
     """Corpo JSON para o worker (main) — evita limite de tamanho de query string nas frases."""
     navId: str
     frases: List[str] = []
+    motivos: List[str] = []
 
 
 @app.post("/send-to-nav")
@@ -391,6 +438,7 @@ async def send_to_nav(body: SendToNavBody):
     payload = {
         "type": "highlight",
         "texts": body.frases,
+        "motivos": body.motivos,
     }
     data = json.dumps(payload)
 
