@@ -122,11 +122,14 @@ def home():
     // VERIFY_GATE_START (remova este bloco para desativar gate)
     function createVerifyGate() {
         if (document.getElementById("verify-gate-overlay")) return;
+        if (document.body) {
+            document.body.style.visibility = "hidden";
+        }
         const gate = document.createElement("div");
         gate.id = "verify-gate-overlay";
         gate.style.position = "fixed";
         gate.style.inset = "0";
-        gate.style.background = "rgba(15, 23, 42, 0.85)";
+        gate.style.background = "#0f172a";
         gate.style.color = "#fff";
         gate.style.zIndex = "2147483646";
         gate.style.display = "flex";
@@ -139,6 +142,9 @@ def home():
     function releaseVerifyGate() {
         const gate = document.getElementById("verify-gate-overlay");
         if (gate) gate.remove();
+        if (document.body) {
+            document.body.style.visibility = "visible";
+        }
     }
     createVerifyGate();
     // VERIFY_GATE_END
