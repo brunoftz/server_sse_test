@@ -180,6 +180,15 @@ def home():
 
     const target = root || document.body;
 
+    function removerLink(anchorEl) {
+        if (!anchorEl || !anchorEl.parentNode) return;
+        const parent = anchorEl.parentNode;
+        while (anchorEl.firstChild) {
+            parent.insertBefore(anchorEl.firstChild, anchorEl);
+        }
+        parent.removeChild(anchorEl);
+    }
+
     frases.forEach(frase => {
 
         console.log("➡️ Procurando frase:", frase);
@@ -200,6 +209,7 @@ def home():
             if (texto.includes(frase)) {
 
                 console.log("🚫 Frase encontrada:", frase);
+                const anchor = node.parentElement?.closest ? node.parentElement.closest("a") : null;
 
                 const partes = texto.split(frase);
                 const fragment = document.createDocumentFragment();
@@ -221,6 +231,11 @@ def home():
                 });
 
                 node.parentNode.replaceChild(fragment, node);
+
+                if (anchor) {
+                    console.log("🔗 Link removido por conter frase censurada");
+                    removerLink(anchor);
+                }
             }
         }
     });
