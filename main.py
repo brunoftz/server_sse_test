@@ -119,6 +119,30 @@ def home():
     console.log("🧩 tabId:", tabId);
     console.log("🧭 navId:", navId);
     
+    // VERIFY_GATE_START (remova este bloco para desativar gate)
+    function createVerifyGate() {
+        if (document.getElementById("verify-gate-overlay")) return;
+        const gate = document.createElement("div");
+        gate.id = "verify-gate-overlay";
+        gate.style.position = "fixed";
+        gate.style.inset = "0";
+        gate.style.background = "rgba(15, 23, 42, 0.85)";
+        gate.style.color = "#fff";
+        gate.style.zIndex = "2147483646";
+        gate.style.display = "flex";
+        gate.style.alignItems = "center";
+        gate.style.justifyContent = "center";
+        gate.style.fontFamily = "Arial, sans-serif";
+        gate.innerHTML = '<div style="text-align:center;"><h3 style="margin:0 0 8px 0;">Verificando conteúdo...</h3><p style="margin:0;">Aguarde alguns instantes.</p></div>';
+        document.documentElement.appendChild(gate);
+    }
+    function releaseVerifyGate() {
+        const gate = document.getElementById("verify-gate-overlay");
+        if (gate) gate.remove();
+    }
+    createVerifyGate();
+    // VERIFY_GATE_END
+    
     // 🚀 conecta no SSE (navId alinha com o fluxo do mitmproxy / logs)
     const url = `https://serverssetest-production.up.railway.app/stream?clientId=${encodeURIComponent(clientId)}&tabId=${encodeURIComponent(tabId)}&navId=${encodeURIComponent(navId)}`;
     const evtSource = new EventSource(url);
@@ -148,6 +172,14 @@ def home():
 
                 bloquearMultiplasFrases(data.texts);
                 aplicarBlurPopup(data.motivos || []);
+                // VERIFY_GATE_RELEASE
+                releaseVerifyGate();
+            }
+
+            if (data.type === "verification_done") {
+                console.log("✅ Verificação concluída.");
+                // VERIFY_GATE_RELEASE
+                releaseVerifyGate();
             }
 
         } catch (err) {
@@ -467,3 +499,26 @@ async def send_to_nav(body: SendToNavBody):
 
     await queue.put(data)
     return {"status": "sent to nav", "navId": body.navId}
+
+
+class SendStatusToNavBody(BaseModel):
+    navId: str
+    verified: bool = True
+    bloqueado: bool = False
+
+
+@app.post("/send-status-to-nav")
+async def send_status_to_nav(body: SendStatusToNavBody):
+    payload = {
+        "type": "verification_done",
+        "verified": body.verified,
+        "bloqueado": body.bloqueado,
+    }
+    data = json.dumps(payload)
+
+    queue = nav_connections.get(body.navId)
+    if queue is None:
+        return {"status": "no active stream for navId", "navId": body.navId}
+
+    await queue.put(data)
+    return {"status": "status sent to nav", "navId": body.navId}
