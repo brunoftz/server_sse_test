@@ -34,6 +34,25 @@ async def options_stream():
 connections = {}
 # correlaciona um navId (emitido pelo mitmproxy por carregamento) à mesma fila do SSE
 nav_connections = {}
+# controla streams ativos por (clientId, tabId, navId)
+active_streams: dict[tuple[str, str, str], int] = {}
+# Mensagens recebidas antes do browser abrir o EventSource (evita gate preso em corrida)
+_PENDING_NAV_MAX = 32
+pending_nav_messages: dict[str, list[str]] = {}
+
+
+def _buffer_nav_message(nav_id: str, data: str) -> None:
+    if not nav_id:
+        return
+    bucket = pending_nav_messages.setdefault(nav_id, [])
+    if len(bucket) >= _PENDING_NAV_MAX:
+        bucket.pop(0)
+    bucket.append(data)
+
+
+async def _drain_pending_to_queue(nav_id: str, queue: asyncio.Queue) -> None:
+    for msg in pending_nav_messages.pop(nav_id, []):
+        await queue.put(msg)
 
 @app.get("/")
 def home():
@@ -114,11 +133,13 @@ def home():
     sessionStorage.setItem("tabId", tabId);
     
     const navId = crypto.randomUUID();
+    window.__RESIST_NAV_ID__ = navId;
 
     console.log("🆔 clientId:", clientId);
     console.log("🧩 tabId:", tabId);
-    console.log("🧭 navId:", navId);
+    console.log("%c🧭 navId (demo page — mitm usa o UUID do log)", "font-weight:bold;color:#22c55e", navId);
     
+    // VERIFY_GATE desativado — descomente para voltar o overlay "Verificando conteúdo..."
     // VERIFY_GATE_START (remova este bloco para desativar gate)
     function createVerifyGate() {
         if (document.getElementById("verify-gate-overlay")) return;
@@ -148,9 +169,17 @@ def home():
     }
     createVerifyGate();
     // VERIFY_GATE_END
-    
+    setTimeout(function () {
+        if (document.getElementById("verify-gate-overlay")) {
+            console.warn("⏱️ VERIFY_GATE: timeout — liberando overlay por segurança");
+            releaseVerifyGate();
+        }
+    }, 90000);
+    //
+
     // 🚀 conecta no SSE (navId alinha com o fluxo do mitmproxy / logs)
-    const url = `https://serverssetest-production.up.railway.app/stream?clientId=${encodeURIComponent(clientId)}&tabId=${encodeURIComponent(tabId)}&navId=${encodeURIComponent(navId)}`;
+    const url = `https://ssenovo-production.up.railway.app/stream?clientId=${encodeURIComponent(clientId)}&tabId=${encodeURIComponent(tabId)}&navId=${encodeURIComponent(navId)}`;
+    console.log("[Resist SSE] EventSource URL:", url);
     const evtSource = new EventSource(url);
 
     // ✅ conexão aberta
@@ -175,17 +204,18 @@ def home():
 
             if (data.type === "highlight") {
                 console.log("🚨 Highlight acionado com frases:", data.texts);
-
-                bloquearMultiplasFrases(data.texts);
-                aplicarBlurPopup(data.motivos || []);
-                // VERIFY_GATE_RELEASE
-                releaseVerifyGate();
+                try {
+                    bloquearMultiplasFrases(data.texts);
+                    aplicarBlurPopup(data.motivos || []);
+                } catch (e) {
+                    console.error("❌ Erro no highlight:", e);
+                }
+                // releaseVerifyGate(); // VERIFY_GATE
             }
 
             if (data.type === "verification_done") {
                 console.log("✅ Verificação concluída.");
-                // VERIFY_GATE_RELEASE
-                releaseVerifyGate();
+                // releaseVerifyGate(); // VERIFY_GATE
             }
 
         } catch (err) {
@@ -375,6 +405,9 @@ async def stream(
     tabId: str,
     navId: Optional[str] = None,
 ):
+    nav_key = navId or "-"
+    stream_key = (clientId, tabId, nav_key)
+    active_streams[stream_key] = active_streams.get(stream_key, 0) + 1
 
     if clientId not in connections:
         connections[clientId] = {}
@@ -385,16 +418,30 @@ async def stream(
     queue = connections[clientId][tabId]
     if navId:
         nav_connections[navId] = queue
-    print(f"🟢 Conectado: client={clientId} tab={tabId} nav={navId or '-'}")
+        await _drain_pending_to_queue(navId, queue)
+        print(f"🟢 SSE stream navId registrado (POST /send-to-nav usa este id): {navId}")
+    print(
+        f"🟢 Conectado: client={clientId} tab={tabId} nav={navId or '-'} "
+        f"| ativos={active_streams.get(stream_key, 0)}"
+    )
 
     async def event_generator():
         try:
             yield "retry: 300\n\n"
+            ack = json.dumps({
+                "type": "stream_ack",
+                "navId": navId,
+                "clientId": clientId,
+                "tabId": tabId,
+            })
+            print(f"📡 stream_ack enviado: navId={navId or '-'} client={clientId} tab={tabId}")
+            yield f"data: {ack}\n\n"
             yield ":\n\n"
 
             while True:
                 try:
                     data = await asyncio.wait_for(queue.get(), timeout=5)
+                    print(f"📡 stream data enviado para navId={navId or '-'}: {data[:140]}")
                     yield f"data: {data}\n\n"
                 except asyncio.TimeoutError:
                     yield ":\n\n"  # heartbeat
@@ -403,21 +450,33 @@ async def stream(
                     break
 
         finally:
-            # 🔥 só executa quando a conexão REALMENTE fecha
-            print(f"🔴 Desconectado: {clientId} | {tabId} | nav={navId or '-'}")
-            if navId:
-                nav_connections.pop(navId, None)
-            connections.get(clientId, {}).pop(tabId, None)
+            # Evita corrida: só remove mapeamentos quando for o último stream ativo da chave
+            remaining = max(active_streams.get(stream_key, 1) - 1, 0)
+            if remaining == 0:
+                active_streams.pop(stream_key, None)
+            else:
+                active_streams[stream_key] = remaining
 
-            if clientId in connections and not connections[clientId]:
-                connections.pop(clientId)
+            print(
+                f"🔴 Desconectado: {clientId} | {tabId} | nav={navId or '-'} "
+                f"| ativos_restantes={remaining}"
+            )
+
+            if remaining == 0:
+                if navId and nav_connections.get(navId) is queue:
+                    nav_connections.pop(navId, None)
+                if connections.get(clientId, {}).get(tabId) is queue:
+                    connections.get(clientId, {}).pop(tabId, None)
+                if clientId in connections and not connections[clientId]:
+                    connections.pop(clientId)
 
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "*",
             "Access-Control-Allow-Methods": "GET",
@@ -501,9 +560,12 @@ async def send_to_nav(body: SendToNavBody):
 
     queue = nav_connections.get(body.navId)
     if queue is None:
-        return {"status": "no active stream for navId", "navId": body.navId}
+        _buffer_nav_message(body.navId, data)
+        print(f"📤 send-to-nav BUFFERED (browser ainda não abriu /stream): navId={body.navId}")
+        return {"status": "buffered until stream connects", "navId": body.navId}
 
     await queue.put(data)
+    print(f"📤 send-to-nav entregue na fila SSE: navId={body.navId} frases={len(body.frases)}")
     return {"status": "sent to nav", "navId": body.navId}
 
 
@@ -524,7 +586,10 @@ async def send_status_to_nav(body: SendStatusToNavBody):
 
     queue = nav_connections.get(body.navId)
     if queue is None:
-        return {"status": "no active stream for navId", "navId": body.navId}
+        _buffer_nav_message(body.navId, data)
+        print(f"📤 send-status-to-nav BUFFERED: navId={body.navId}")
+        return {"status": "buffered until stream connects", "navId": body.navId}
 
     await queue.put(data)
+    print(f"📤 send-status-to-nav entregue: navId={body.navId}")
     return {"status": "status sent to nav", "navId": body.navId}
